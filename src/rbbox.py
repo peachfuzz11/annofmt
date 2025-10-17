@@ -1,4 +1,4 @@
-from src.bbox import BBox
+from bbox import BBox
 
 
 class RBBox(BBox):
