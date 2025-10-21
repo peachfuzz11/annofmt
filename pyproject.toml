@@ -1,24 +1,7 @@
-[build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "annotations"
 version = "0.1.0"
+description = "Add your description here"
 readme = "README.md"
-authors = [
-    { name = "ph" }
-]
-
-requires-python = ">=3.9"
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.dynamic]
-dependencies = { file = ["requirements.txt"] }
-
-[project.urls]
-Repository = "https://github.com/peachfuzz11/annotations"
-
-
+requires-python = ">=3.14"
+dependencies = []
