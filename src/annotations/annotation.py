@@ -1,7 +1,7 @@
 import typing
 
-from bbox import BBox
-from tag import Tag
+from annotations.bbox import BBox
+from annotations.tag import Tag
 
 
 class Annotation:
