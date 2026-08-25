@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from annofmt.geometry._base import Geometry
-from annofmt.geometry.bbox import BBox
 from annofmt.tag import Tag
+
+if TYPE_CHECKING:
+    from annofmt.geometry._base import Geometry
+    from annofmt.geometry.bbox import BBox
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +30,7 @@ class Annotation:
     @property
     def bbox(self) -> BBox:
         """Axis-aligned bounding box of the annotation's geometry."""
-        return self.geometry.as_bbox()
+        return self.geometry.to_bbox()
 
     def has_label(self, *labels: str) -> bool:
         return any(tag.label in labels for tag in self.tags)

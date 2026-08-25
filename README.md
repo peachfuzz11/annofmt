@@ -9,80 +9,71 @@ Zero dependencies, fully typed, Python 3.12+.
 uv add annofmt
 # or
 pip install annofmt
+# or straight from the repo
+uv add git+https://github.com/peachfuzz11/annofmt.git
 ```
 
 ## Quickstart
 
 ```python
-from annofmt import Annotation, BBox, RBBox, Segm, Tag
+from annofmt.annotation import Annotation
+from annofmt.geometry.bbox import BBox
+from annofmt.geometry.rbbox import RBBox
+from annofmt.geometry.segm import Segm
+from annofmt.tag import Tag
 
-bbox = BBox(10, 20, 50, 90)
-bbox.to_yolo()                      # normalized center format, no image size needed
-BBox.from_yolo(0.5, 0.5, 0.2, 0.4)  # stays normalized; use .scale(w, h) for pixels
+bbox = BBox(x=30, y=50, w=40, h=20)   # center + extent
+bbox.x_min                            # derived corner values
+bbox.to_xywh()
 
-rotated = RBBox.from_degrees(cx=30, cy=50, w=40, h=10, degrees=25)
-rotated.as_bbox()                   # lossy enclosing axis-aligned box
+rotated = RBBox.from_degrees(x=30, y=50, w=40, h=20, degrees=25)   # same xywh, plus `a`
+rotated.corners()
+rotated.to_bbox()                     # lossy enclosing axis-aligned box
 
 segm = Segm.from_polygon([(0, 0), (9, 0), (9, 9), (5, 5), (0, 9)])
-segm.to_rle(height=10, width=10)    # COCO-style column-major run-length counts
-Segm.from_rle(runs, 10, 10)         # ...and back to lattice polygons
+segm.indices                          # integer pixel-index rings
+segm.to_rle(height=10, width=10)      # COCO-style column-major run-length counts
+Segm.from_rle(runs, 10, 10)           # ...and back to rings
 
 annotation = Annotation(geometry=segm).add_tag(Tag("person", score=0.98))
-annotation.bbox                     # works for every geometry type
+annotation.bbox                       # works for every geometry type
 ```
 
-All types are frozen dataclasses: operations return new instances and never
-mutate the receiver.
+All types are immutable: operations return new instances and never mutate
+the receiver.
 
 ## Geometry types
 
-| Type      | Coordinates            | Description                              |
-| --------- | ---------------------- | ---------------------------------------- |
-| `BBox`    | continuous floats      | axis-aligned bounding box                |
-| `RBBox`   | continuous floats      | rotated box (center + extent + angle)    |
-| `Segm`    | integer pixel indices  | one or more polygon rings, even-odd fill |
+`BBox` is the base class; storage is always center-plus-extent (`x`, `y`,
+`w`, `h`).
 
-`RBBox` stores angles canonically in radians in `[-pi, pi)`; construct with
-`RBBox(...)`, `RBBox.from_degrees(...)` and read via `.angle_rad` /
-`.angle_deg`.
+| Type     | Extra storage | Description                                       |
+| -------- | ------------- | ------------------------------------------------- |
+| `BBox`   | —             | axis-aligned box; corners are derived properties   |
+| `RBBox`  | `a`           | adds rotation in radians; corners become the enclosing box |
+| `Segm`   | `indices`     | polygon rings over integer pixel indices; `x/y/w/h` hold the enclosing box |
 
 ## Conversion matrix
 
-| From \ To | `BBox`                            | `RBBox`                                | `Segm`                                              |
-| --------- | --------------------------------- | -------------------------------------- | --------------------------------------------------- |
-| `BBox`    | —                                 | unavailable (no rotation to recover)   | exact rectangle ring (`Segm.from_bbox`)             |
-| `RBBox`   | enclosing box (`as_bbox`, lossy)  | —                                      | corner ring (`Segm.from_rbbox`, rounded to lattice) |
-| `Segm`    | enclosing box (`as_bbox`, lossy)  | minimum-area rect (`as_rbbox`, lossy)  | —                                                   |
+| From \ To | `BBox`                           | `RBBox`                                 | `Segm`                                              |
+| --------- | -------------------------------- | --------------------------------------- | --------------------------------------------------- |
+| `BBox`    | —                                | unavailable (rotation cannot be invented)| exact rectangle ring (`Segm.from_bbox`)             |
+| `RBBox`   | enclosing box (`to_bbox`, lossy) | —                                       | corner ring (`Segm.from_rbbox`, rounded to lattice) |
+| `Segm`    | enclosing box (`to_bbox`, lossy) | minimum-area rect (`as_rbbox`, lossy)   | —                                                   |
 
-Notes:
-
-- `RBBox -> BBox` exists because the enclosing axis-aligned box is well
-  defined; `BBox -> RBBox` does not, because rotation cannot be invented.
-- IoU is exact within a family (`BBox`/`BBox`, `RBBox`/`RBBox`,
-  `Segm`/`Segm`); `RBBox` also accepts `BBox` exactly (a `BBox` is a rotated
-  box at angle 0), and `BBox.iou(rbbox)` delegates accordingly. Other
-  combinations raise `TypeError` instead of silently approximating.
+IoU is defined **only between two geometries of the same type** and raises
+`TypeError` otherwise. Convert explicitly first when a cross-type comparison
+is really wanted (e.g. compare every geometry's `to_bbox()`).
 
 ## Conventions
 
-- **Indices**: `Segm` coordinates are integer pixel indices. Fractional input
+- **Angles**: stored in radians, canonically wrapped to `[-pi, pi)`. Build
+  with `from_degrees`, read via `.angle_deg` / `.angle_rad`.
+- **Indices**: `Segm` coordinates are integer pixel indices; fractional input
   is rejected. Vertices sit on the integer lattice.
 - **Rasterization**: pixels are unit squares centered at `(col + 0.5,
   row + 0.5)`; rings combine under an even-odd rule, so nested rings act as
   holes regardless of winding order.
 - **RLE**: COCO-style column-major counts starting with zeros;
   `to_rle(height, width)` / `from_rle(runs, height, width)` round-trip.
-- **YOLO**: `from_yolo`/`to_yolo` deal purely in normalized center-format
-  coordinates and never touch image sizes; mapping between normalized space
-  and pixels is orthogonal via `scale(width_factor, height_factor)`.
-- **Immutability**: every geometry operation yields a new instance.
-
-## Migrating from the pre-release `annotations` package
-
-- The distribution and import name changed to `annofmt`.
-- `Tag.prob` is now `Tag.score` and validated to `[0, 1]`.
-- `scale()` takes `(factor_w, factor_h)` (was `(factor_h, factor_w)`) and
-  validates its factors instead of silently ignoring zeros.
-- `Annotation` holds any `Geometry` under `.geometry`; `.bbox` remains as a
-  convenience property.
-- All classes are now immutable dataclasses with value equality and hashing.
+- **Immutability**: every operation yields a new instance.

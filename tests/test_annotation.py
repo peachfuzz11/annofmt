@@ -4,10 +4,11 @@ import dataclasses
 
 import pytest
 
-from annofmt import Annotation, Tag
+from annofmt.annotation import Annotation
 from annofmt.geometry.bbox import BBox
 from annofmt.geometry.rbbox import RBBox
 from annofmt.geometry.segm import Segm
+from annofmt.tag import Tag
 
 
 def test_tag_score_validated():
@@ -20,17 +21,17 @@ def test_tag_score_validated():
 
 def test_annotation_holds_any_geometry():
     geometries = [
-        BBox(0, 0, 2, 2),
+        BBox(1, 1, 2, 2),
         RBBox.from_degrees(1, 1, 4, 2, 30),
         Segm.from_polygon([(0, 0), (2, 0), (2, 2)]),
     ]
     for geometry in geometries:
         annotation = Annotation(geometry)
-        assert annotation.bbox == geometry.as_bbox()
+        assert annotation.bbox == geometry.to_bbox()
 
 
 def test_has_label():
-    annotation = Annotation(BBox(0, 0, 1, 1), (Tag("cat"), Tag("blurry", score=0.3)))
+    annotation = Annotation(BBox(1, 1, 2, 2), (Tag("cat"), Tag("blurry", score=0.3)))
     assert annotation.has_label("cat")
     assert annotation.has_label("cat", "dog")
     assert not annotation.has_label("dog")
@@ -38,7 +39,7 @@ def test_has_label():
 
 def test_add_tag_returns_new_instance():
     tag = Tag("cat")
-    original = Annotation(BBox(0, 0, 1, 1))
+    original = Annotation(BBox(1, 1, 2, 2))
     updated = original.add_tag(tag)
     assert updated.tags == (tag,)
     assert original.tags == ()
@@ -47,10 +48,10 @@ def test_add_tag_returns_new_instance():
 
 def test_annotation_rejects_non_tags():
     with pytest.raises(TypeError, match="Tag"):
-        Annotation(BBox(0, 0, 1, 1), ("cat",))
+        Annotation(BBox(1, 1, 2, 2), ("cat",))
 
 
 def test_frozen():
-    annotation = Annotation(BBox(0, 0, 1, 1))
+    annotation = Annotation(BBox(1, 1, 2, 2))
     with pytest.raises(dataclasses.FrozenInstanceError):
-        annotation.geometry = RBBox(0, 0, 1, 1)
+        annotation.geometry = RBBox(1, 1, 1, 1)

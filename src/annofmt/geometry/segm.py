@@ -3,17 +3,17 @@ from __future__ import annotations
 import math
 import operator
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import FrozenInstanceError
 from numbers import Real
 from typing import cast
 
-from annofmt.geometry._base import Geometry
 from annofmt.geometry._polygons import min_area_rect, signed_area
 from annofmt.geometry.bbox import BBox
 from annofmt.geometry.rbbox import RBBox
 
 Index = int
 Point2D = tuple[Index, Index]
+Rings = tuple[tuple[Point2D, ...], ...]
 
 
 def _to_index(value: object, name: str) -> Index:
@@ -38,19 +38,42 @@ def _to_index(value: object, name: str) -> Index:
     raise ValueError(f"{name} must be an integer pixel index, got {value!r}")
 
 
-def _rasterize(parts: Sequence[Sequence[Point2D]], height: int, width: int) -> bytearray:
-    """Even-odd scanline fill of all parts combined into a row-major grid.
+def _normalize_rings(indices: Iterable[Iterable[Sequence[float]]]) -> Rings:
+    materialized = [tuple(part) for part in indices]
+    if not materialized:
+        raise ValueError("segmentation needs at least one ring")
+    first_ring = materialized[0]
+    if first_ring and isinstance(first_ring[0], Real):
+        flat_ring = cast(tuple[Sequence[float], ...], tuple(materialized))
+        rings: list[tuple[Sequence[float], ...]] = [flat_ring]
+    else:
+        rings = materialized
+    normalized: list[tuple[Point2D, ...]] = []
+    for ring in rings:
+        points: list[Point2D] = []
+        for point in ring:
+            if len(point) != 2:
+                raise ValueError(f"each point needs exactly 2 coordinates, got {point!r}")
+            points.append((_to_index(point[0], "x"), _to_index(point[1], "y")))
+        if len(points) < 3:
+            raise ValueError(f"each ring needs at least 3 points, got {len(points)}")
+        normalized.append(tuple(points))
+    return tuple(normalized)
 
-    Pixels are unit squares centered at ``(col + 0.5, row + 0.5)``; parts may
+
+def _rasterize(rings: Sequence[Sequence[Point2D]], height: int, width: int) -> bytearray:
+    """Even-odd scanline fill of all rings combined into a row-major grid.
+
+    Pixels are unit squares centered at ``(col + 0.5, row + 0.5)``; rings may
     overlap or contain holes regardless of winding order.
     """
     grid = bytearray(height * width)
     edges: list[tuple[float, float, float, float]] = []
-    for part in parts:
-        n = len(part)
+    for ring in rings:
+        n = len(ring)
         for i in range(n):
-            x1, y1 = part[i]
-            x2, y2 = part[(i + 1) % n]
+            x1, y1 = ring[i]
+            x2, y2 = ring[(i + 1) % n]
             if y1 != y2:
                 edges.append((float(x1), float(y1), float(x2), float(y2)))
     for row in range(height):
@@ -117,7 +140,7 @@ def _grid_from_runs(runs: Sequence[Index], height: int, width: int) -> bytearray
     return grid
 
 
-def _trace_loops(grid: bytearray, height: int, width: int) -> tuple[tuple[Point2D, ...], ...]:
+def _trace_loops(grid: bytearray, height: int, width: int) -> Rings:
     """Extract boundary loops of the filled region as lattice polygons.
 
     Boundary edges are directed consistently around filled cells, so outer
@@ -184,81 +207,68 @@ def _trace_loops(grid: bytearray, height: int, width: int) -> tuple[tuple[Point2
     return tuple(loops)
 
 
-@dataclass(frozen=True, slots=True)
-class Segm(Geometry):
-    """Immutable segmentation as polygons over integer pixel indices.
+class Segm(BBox):
+    """Immutable segmentation over integer pixel indices.
 
-    Coordinates are integer indices only; fractional coordinates are
-    rejected. ``parts`` holds one or more rings that combine under an
-    even-odd rule, so a ring nested inside another acts as a hole regardless
-    of winding. A single flat ring may also be passed directly to the
-    constructor.
+    Storage mirrors :class:`BBox`: the center/extent slots hold the enclosing
+    box of the indices, plus one extra slot with the polygon rings themselves.
+    The corner properties therefore work fully inherited.
 
-    Conventions:
-        - Polygon vertices sit on the integer lattice.
-        - Rasterization (:meth:`to_rle`) treats pixels as unit squares
-          centered at ``(col + 0.5, row + 0.5)``.
-        - :meth:`as_bbox` returns the enclosing box of the raw indices;
-          :meth:`from_bbox` floors minimum and ceils maximum corners, making
-          ``Segm.from_bbox(segm.as_bbox())`` stable for lattice-aligned boxes.
+    Coordinates are integer indices only; fractional values are rejected.
+    ``indices`` holds one or more rings that combine under an even-odd rule,
+    so a ring nested inside another acts as a hole regardless of winding. A
+    single flat ring may also be passed directly to the constructor.
     """
 
-    parts: tuple[tuple[Point2D, ...], ...]
+    __slots__ = ("indices",)
 
-    def __init__(self, parts: Iterable[Iterable[Sequence[float]]]) -> None:
-        object.__setattr__(self, "parts", self._normalize_parts(parts))
+    indices: Rings
 
-    @staticmethod
-    def _normalize_parts(parts: Iterable[Iterable[Sequence[float]]]) -> tuple[tuple[Point2D, ...], ...]:
-        materialized: list[tuple[Sequence[float], ...]] = [tuple(part) for part in parts]
-        if not materialized:
-            return ()
-        first_ring = materialized[0]
-        if first_ring and isinstance(first_ring[0], Real):
-            flat_ring = cast(tuple[Sequence[float], ...], tuple(materialized))
-            materialized = [flat_ring]
-        normalized: list[tuple[Point2D, ...]] = []
-        for ring in materialized:
-            points: list[Point2D] = []
-            for point in ring:
-                if len(point) != 2:
-                    raise ValueError(f"each point needs exactly 2 coordinates, got {point!r}")
-                points.append((_to_index(point[0], "x"), _to_index(point[1], "y")))
-            if len(points) < 3:
-                raise ValueError(f"each ring needs at least 3 points, got {len(points)}")
-            normalized.append(tuple(points))
-        return tuple(normalized)
+    def __init__(self, indices: Iterable[Iterable[Sequence[float]]]) -> None:
+        rings = _normalize_rings(indices)
+        xs = [point[0] for ring in rings for point in ring]
+        ys = [point[1] for ring in rings for point in ring]
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+        object.__setattr__(self, "x", (x_min + x_max) / 2)
+        object.__setattr__(self, "y", (y_min + y_max) / 2)
+        object.__setattr__(self, "w", x_max - x_min)
+        object.__setattr__(self, "h", y_max - y_min)
+        object.__setattr__(self, "indices", rings)
 
     @classmethod
     def from_polygon(cls, points: Iterable[Sequence[float]]) -> Segm:
         """Single-ring segmentation."""
-        return cls((tuple(points),))
+        return Segm((tuple(points),))
 
     @classmethod
     def from_bbox(cls, bbox: BBox) -> Segm:
-        """Exact rectangle polygon covering the box (floored min corners,
+        """Exact rectangle ring covering the box (floored min corners,
         ceiled max corners)."""
         x_min = math.floor(bbox.x_min)
         y_min = math.floor(bbox.y_min)
         x_max = math.ceil(bbox.x_max)
         y_max = math.ceil(bbox.y_max)
-        return cls.from_polygon(((x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)))
+        return Segm.from_polygon(((x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)))
 
     @classmethod
     def from_rbbox(cls, rbbox: RBBox) -> Segm:
-        """Polygon over the four rotated-box corners, rounded to the lattice."""
+        """Ring over the four rotated-box corners, rounded to the lattice."""
         corners = rbbox.corners()
-        return cls.from_polygon(tuple((int(round(x)), int(round(y))) for x, y in corners))
+        return Segm.from_polygon(tuple((int(round(x)), int(round(y))) for x, y in corners))
 
     @classmethod
     def from_rle(cls, runs: Sequence[Index], height: Index, width: Index) -> Segm:
-        """Decode COCO-style column-major run-length counts into polygons."""
+        """Decode COCO-style column-major run-length counts into rings."""
         height_i = _to_index(height, "height")
         width_i = _to_index(width, "width")
         if height_i <= 0 or width_i <= 0:
             raise ValueError("height and width must be positive")
         grid = _grid_from_runs(runs, height_i, width_i)
-        return cls(_trace_loops(grid, height_i, width_i))
+        loops = _trace_loops(grid, height_i, width_i)
+        if not loops:
+            raise ValueError("mask is empty, no rings to trace")
+        return Segm(loops)
 
     def to_rle(self, height: Index, width: Index) -> tuple[Index, ...]:
         """Encode as COCO-style column-major run-length counts on a raster of
@@ -267,7 +277,7 @@ class Segm(Geometry):
         width_i = _to_index(width, "width")
         if height_i <= 0 or width_i <= 0:
             raise ValueError("height and width must be positive")
-        grid = _rasterize(self.parts, height_i, width_i)
+        grid = _rasterize(self.indices, height_i, width_i)
         return _runs_from_grid(grid, height_i, width_i)
 
     @property
@@ -275,33 +285,17 @@ class Segm(Geometry):
         """Sum of signed ring areas; oppositely wound inner rings subtract.
 
         Rings produced by :meth:`from_rle` carry consistent winding. For
-        hand-built multi-part geometries this equals the covered area only
-        when parts do not overlap unless they are wound as holes.
+        hand-built multi-ring geometries this equals the covered area only
+        when rings do not overlap unless they are wound as holes.
         """
-        return abs(sum(signed_area(ring) for ring in self.parts))
-
-    def bounds(self) -> BBox:
-        return self.as_bbox()
-
-    def as_bbox(self) -> BBox:
-        """Lossy enclosing axis-aligned box of all indices."""
-        xs = [point[0] for ring in self.parts for point in ring]
-        ys = [point[1] for ring in self.parts for point in ring]
-        if not xs:
-            raise ValueError("empty segmentation has no bounds")
-        return BBox(min(xs), min(ys), max(xs), max(ys))
-
-    def as_rbbox(self) -> RBBox:
-        """Lossy minimum-area enclosing rotated box (rotating calipers)."""
-        (cx, cy), w, h, angle = min_area_rect([point for ring in self.parts for point in ring])
-        return RBBox(cx, cy, w, h, angle)
+        return abs(sum(signed_area(ring) for ring in self.indices))
 
     def contains_point(self, x: Index, y: Index) -> bool:
         """Even-odd containment test at an integer index point."""
         xi = _to_index(x, "x")
         yi = _to_index(y, "y")
         inside = False
-        for ring in self.parts:
+        for ring in self.indices:
             j = len(ring) - 1
             for i in range(len(ring)):
                 x1, y1 = ring[j]
@@ -316,39 +310,65 @@ class Segm(Geometry):
     def translate(self, dx: float, dy: float) -> Segm:
         dxi = _to_index(dx, "dx")
         dyi = _to_index(dy, "dy")
-        return Segm(tuple(tuple((x + dxi, y + dyi) for x, y in ring) for ring in self.parts))
+        shifted = tuple(tuple((px + dxi, py + dyi) for px, py in ring) for ring in self.indices)
+        return Segm(shifted)
 
     def scale(self, factor_w: float, factor_h: float) -> Segm:
-        """Scale about the center and round back to integer indices."""
-        bbox = self.as_bbox()
-        scaled = bbox.scale(factor_w, factor_h)
-        fx = scaled.width / bbox.width if bbox.width else factor_w
-        fy = scaled.height / bbox.height if bbox.height else factor_h
-        cx = bbox.x_min + bbox.width / 2
-        cy = bbox.y_min + bbox.height / 2
-        return Segm(
+        """Scale the indices about the center and round back to integers."""
+        scaled_box = BBox(self.x, self.y, self.w, self.h).scale(factor_w, factor_h)
+        cx, cy = self.x, self.y
+        fx = scaled_box.w / self.w if self.w else factor_w
+        fy = scaled_box.h / self.h if self.h else factor_h
+        rings = tuple(
             tuple(
-                tuple(
-                    (int(round(cx + (x - cx) * fx)), int(round(cy + (y - cy) * fy)))
-                    for x, y in ring
-                )
-                for ring in self.parts
+                (int(round(cx + (px - cx) * fx)), int(round(cy + (py - cy) * fy)))
+                for px, py in ring
             )
+            for ring in self.indices
         )
+        return Segm(rings)
 
-    def iou(self, other: Geometry) -> float:
-        """IoU against another ``Segm``, rasterized on the combined extent
-        of both geometries."""
-        if not isinstance(other, Segm):
-            raise TypeError(f"Segm.iou supports Segm, got {type(other).__name__}; convert explicitly e.g. other.as_bbox()")
-        if not self.parts or not other.parts:
-            return 0.0
-        height = max(point[1] for segm in (self, other) for ring in segm.parts for point in ring) + 1
-        width = max(point[0] for segm in (self, other) for ring in segm.parts for point in ring) + 1
-        grid_a = _rasterize(self.parts, height, width)
-        grid_b = _rasterize(other.parts, height, width)
+    def as_rbbox(self) -> RBBox:
+        """Lossy minimum-area enclosing rotated box (rotating calipers)."""
+        (cx, cy), w, h, angle = min_area_rect([point for ring in self.indices for point in ring])
+        return RBBox(cx, cy, w, h, angle)
+
+    def to_bbox(self) -> BBox:
+        """Plain axis-aligned :class:`BBox` of the enclosing extent."""
+        return BBox(self.x, self.y, self.w, self.h)
+
+    def iou(self, other: object) -> float:
+        """IoU against another :class:`Segm`, rasterized on the combined
+        extent of both geometries.
+
+        Raises :class:`TypeError` for any other type, including plain
+        :class:`BBox`.
+        """
+        if type(other) is not Segm:
+            raise TypeError(f"Segm.iou supports Segm only, got {type(other).__name__}")
+        height = max(pt[1] for segm in (self, other) for ring in segm.indices for pt in ring) + 1
+        width = max(pt[0] for segm in (self, other) for ring in segm.indices for pt in ring) + 1
+        grid_a = _rasterize(self.indices, height, width)
+        grid_b = _rasterize(other.indices, height, width)
         intersection = sum(a & b for a, b in zip(grid_a, grid_b, strict=True))
         union = sum(a | b for a, b in zip(grid_a, grid_b, strict=True))
         if union == 0:
             return 0.0
         return intersection / union
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise FrozenInstanceError(f"cannot assign to field {name!r}")
+
+    def __delattr__(self, name: str) -> None:
+        raise FrozenInstanceError(f"cannot delete field {name!r}")
+
+    def __eq__(self, other: object) -> bool:
+        if type(other) is not Segm:
+            return NotImplemented
+        return self.indices == other.indices
+
+    def __hash__(self) -> int:
+        return hash((type(self), self.indices))
+
+    def __repr__(self) -> str:
+        return f"Segm(x={self.x}, y={self.y}, w={self.w}, h={self.h}, indices={self.indices})"

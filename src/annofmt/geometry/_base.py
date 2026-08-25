@@ -11,11 +11,8 @@ class Geometry(ABC):
     """Common interface for all annotation geometries.
 
     All geometries are immutable value objects: every operation returns a new
-    instance and never mutates the receiver.
-
-    Coordinate conventions:
-        - ``BBox`` and ``RBBox`` operate on continuous float coordinates.
-        - ``Segm`` operates exclusively on integer pixel indices.
+    instance and never mutates the receiver. IoU is only defined between two
+    values of the same geometry type.
     """
 
     __slots__ = ()
@@ -27,15 +24,10 @@ class Geometry(ABC):
         ...
 
     @abstractmethod
-    def bounds(self) -> BBox:
-        """Axis-aligned bounding box of the geometry."""
-        ...
+    def to_bbox(self) -> BBox:
+        """Plain axis-aligned :class:`BBox` for this geometry.
 
-    @abstractmethod
-    def as_bbox(self) -> BBox:
-        """Convert to a plain axis-aligned :class:`BBox`.
-
-        Lossy for geometries that carry rotation or interior structure.
+        Lossy for rotated or interior-structured geometries.
         """
         ...
 
@@ -46,16 +38,15 @@ class Geometry(ABC):
 
     @abstractmethod
     def scale(self, factor_w: float, factor_h: float) -> Geometry:
-        """Scale the geometry horizontally and vertically about its center."""
+        """Scale the geometry about its center."""
         ...
 
     @abstractmethod
     def iou(self, other: Geometry) -> float:
-        """Intersection-over-union with ``other``.
+        """Intersection-over-union with another geometry of the same type.
 
-        Exact within a geometry family (``BBox``<->``BBox``, ``RBBox``<->
-        ``RBBox``, ``Segm``<->``Segm``); ``RBBox`` also accepts ``BBox``
-        exactly. All other combinations raise :class:`TypeError` because they
-        would silently lose information.
+        Raises :class:`TypeError` for any other combination; convert
+        explicitly (e.g. ``other.to_bbox()``) first when a comparison across
+        types is really wanted.
         """
         ...

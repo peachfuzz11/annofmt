@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
 import random
 
 import pytest
@@ -16,12 +15,17 @@ L_SHAPE = ((0, 0), (2, 0), (2, 1), (1, 1), (1, 2), (0, 2))
 class TestConstruction:
     def test_flat_polygon_is_wrapped(self):
         segm = Segm([SQUARE])
-        assert len(segm.parts) == 1
-        assert segm.parts[0] == SQUARE
+        assert len(segm.indices) == 1
+        assert segm.indices[0] == SQUARE
 
-    def test_explicit_parts(self):
+    def test_explicit_rings(self):
         segm = Segm([SQUARE, L_SHAPE])
-        assert len(segm.parts) == 2
+        assert len(segm.indices) == 2
+
+    def test_inherited_xywh_is_enclosing_box(self):
+        segm = Segm.from_polygon(SQUARE)
+        assert (segm.x, segm.y, segm.w, segm.h) == (1, 1, 2, 2)
+        assert (segm.x_min, segm.y_min, segm.x_max, segm.y_max) == (0, 0, 2, 2)
 
     def test_fractional_coordinates_rejected(self):
         with pytest.raises(ValueError, match="integer pixel index"):
@@ -29,11 +33,15 @@ class TestConstruction:
 
     def test_integral_floats_accepted(self):
         segm = Segm.from_polygon([(0.0, 0.0), (2.0, 0.0), (2.0, 2.0)])
-        assert segm.parts[0][0] == (0, 0)
+        assert segm.indices[0][0] == (0, 0)
 
     def test_bools_rejected(self):
         with pytest.raises(ValueError, match="bool"):
             Segm.from_polygon([(True, 0), (2, 0), (2, 2)])
+
+    def test_empty_rejected(self):
+        with pytest.raises(ValueError, match="at least one ring"):
+            Segm([])
 
     def test_degenerate_ring_rejected(self):
         with pytest.raises(ValueError, match="at least 3"):
@@ -48,35 +56,35 @@ class TestConstruction:
         b = Segm.from_polygon(list(SQUARE))
         assert a == b
         assert len({a, b}) == 1
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            a.parts = ()
+        with pytest.raises(AttributeError):
+            a.indices = ()
 
-    def test_empty_segm_allowed(self):
-        assert Segm([]).parts == ()
+    def test_equality_uses_indices_not_bounds(self):
+        square = Segm.from_polygon(SQUARE)
+        same_bounds_other_shape = Segm.from_polygon(L_SHAPE)
+        assert square != same_bounds_other_shape
 
 
 class TestBBoxConversions:
     def test_from_bbox_floors_and_ceils(self):
-        segm = Segm.from_bbox(BBox(0.2, 1.7, 3.9, 2.1))
-        assert segm.parts == (((0, 1), (4, 1), (4, 3), (0, 3)),)
+        segm = Segm.from_bbox(BBox(2.5, 4, 3, 4))
+        assert segm.indices == (((1, 2), (4, 2), (4, 6), (1, 6)),)
 
-    def test_as_bbox_enclosing(self):
+    def test_to_bbox_enclosing(self):
         segm = Segm.from_polygon(L_SHAPE)
-        assert segm.as_bbox() == BBox(0, 0, 2, 2)
+        bbox = segm.to_bbox()
+        assert type(bbox) is BBox
+        assert bbox == BBox(1, 1, 2, 2)
 
     def test_lattice_round_trip_is_stable(self):
-        bbox = BBox(1.0, 2.0, 4.0, 6.0)
+        bbox = BBox(2.5, 4, 3, 4)
         segm = Segm.from_bbox(bbox)
-        assert Segm.from_bbox(segm.as_bbox()).parts == segm.parts
-
-    def test_as_bbox_of_empty_raises(self):
-        with pytest.raises(ValueError, match="empty"):
-            Segm([]).as_bbox()
+        assert Segm.from_bbox(segm.to_bbox()).indices == segm.indices
 
     def test_from_rbbox_corners(self):
         rbbox = RBBox(1.5, 1.5, 3, 3, 0.0)
         segm = Segm.from_rbbox(rbbox)
-        assert segm.as_bbox() == BBox(0, 0, 3, 3)
+        assert segm.to_bbox() == BBox(1.5, 1.5, 3, 3)
 
 
 class TestAreaAndContainment:
@@ -102,23 +110,24 @@ class TestAreaAndContainment:
 
 class TestRLE:
     def test_full_square_encoding(self):
-        runs = Segm.from_bbox(BBox(0, 0, 2, 2)).to_rle(2, 2)
+        runs = Segm.from_polygon(SQUARE).to_rle(2, 2)
         assert runs == (0, 4)
 
     def test_decode_full_square(self):
         segm = Segm.from_rle((0, 4), 2, 2)
-        assert segm.as_bbox() == BBox(0, 0, 2, 2)
+        assert segm.to_bbox() == BBox(1, 1, 2, 2)
 
     def test_l_shape_known_runs(self):
         runs = Segm.from_polygon(L_SHAPE).to_rle(2, 2)
         assert runs == (0, 3, 1)
 
-    def test_empty_mask_encoding(self):
-        assert Segm([]).to_rle(3, 5) == (15,)
-
     def test_rle_size_mismatch_rejected(self):
         with pytest.raises(ValueError, match="sum to"):
             Segm.from_rle((0, 5), 2, 2)
+
+    def test_empty_mask_rejected_on_decode(self):
+        with pytest.raises(ValueError, match="empty"):
+            Segm.from_rle((16,), 4, 4)
 
     @pytest.mark.parametrize(
         "geometry",
@@ -163,7 +172,7 @@ class TestIoU:
         assert segm.iou(segm) == pytest.approx(1.0)
 
     def test_disjoint(self):
-        a = Segm.from_polygon(((0, 0), (2, 0), (2, 2), (0, 2)))
+        a = Segm.from_polygon(SQUARE)
         b = Segm.from_polygon(((10, 10), (12, 10), (12, 12), (10, 12)))
         assert a.iou(b) == 0.0
 
@@ -177,12 +186,11 @@ class TestIoU:
         holed = Segm([((0, 0), (4, 0), (4, 4), (0, 4)), ((1, 1), (1, 3), (3, 3), (3, 1))])
         assert solid.iou(holed) == pytest.approx(12 / 16)
 
-    def test_empty(self):
-        assert Segm([]).iou(Segm.from_polygon(SQUARE)) == 0.0
-
-    def test_rejects_other_types(self):
-        with pytest.raises(TypeError, match="BBox"):
-            Segm.from_polygon(SQUARE).iou(BBox(0, 0, 2, 2))
+    def test_rejects_everything_else(self):
+        with pytest.raises(TypeError, match="Segm only"):
+            Segm.from_polygon(SQUARE).iou(BBox(1, 1, 2, 2))
+        with pytest.raises(TypeError, match="Segm only"):
+            Segm.from_polygon(SQUARE).iou(RBBox(1, 1, 2, 2))
 
 
 class TestMinAreaRect:
@@ -190,20 +198,25 @@ class TestMinAreaRect:
         segm = Segm.from_polygon(((0, 0), (4, 0), (4, 2), (0, 2)))
         rbbox = segm.as_rbbox()
         assert rbbox.area == pytest.approx(8.0)
-        enclosing = rbbox.as_bbox()
-        for x, y in segm.parts[0]:
+        enclosing = rbbox.to_bbox()
+        for x, y in segm.indices[0]:
             assert enclosing.x_min <= x <= enclosing.x_max
             assert enclosing.y_min <= y <= enclosing.y_max
 
     def test_diamond_tighter_than_bbox(self):
         diamond = Segm.from_polygon(((2, 0), (4, 2), (2, 4), (0, 2)))
         rbbox = diamond.as_rbbox()
-        assert rbbox.area < diamond.as_bbox().area
+        assert rbbox.area < diamond.to_bbox().area
         assert rbbox.area == pytest.approx(8.0)
 
-    def test_translate_scale(self):
-        segm = Segm.from_polygon(SQUARE)
-        moved = segm.translate(10, 20)
-        assert moved.as_bbox() == BBox(10, 20, 12, 22)
-        grown = segm.scale(3, 2)
-        assert grown.area == pytest.approx(4 * 3 * 2)
+
+class TestOperations:
+    def test_translate_shifts_indices_and_center(self):
+        moved = Segm.from_polygon(SQUARE).translate(10, 20)
+        assert moved.indices[0] == ((10, 20), (12, 20), (12, 22), (10, 22))
+        assert (moved.x, moved.y) == (11, 21)
+
+    def test_scale_rescales_indices(self):
+        grown = Segm.from_polygon(SQUARE).scale(2, 2)
+        assert grown.area == pytest.approx(16.0)
+        assert grown.indices[0] == ((-1, -1), (3, -1), (3, 3), (-1, 3))
