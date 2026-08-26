@@ -1,17 +1,19 @@
+"""Rotated bounding box geometry with metadata support."""
+
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
 from dataclasses import FrozenInstanceError
+from typing import Any
 
-from annofmt.geometry._polygons import clip_convex, shoelace_area
 from annofmt.geometry.bbox import BBox
 
 _TWO_PI = 2.0 * math.pi
 
 
 def _canonical_angle(angle: float) -> float:
-    """Wrap an angle in radians into ``[-pi, pi)``."""
+    """Wrap an angle in radians into [-pi, pi)."""
     wrapped = math.fmod(angle, _TWO_PI)
     if wrapped < 0:
         wrapped += _TWO_PI
@@ -22,19 +24,20 @@ def _canonical_angle(angle: float) -> float:
 
 class RBBox(BBox):
     """Immutable rotated bounding box.
-
-    Shares its storage with :class:`BBox` — center ``x``/``y`` and extent
-    ``w``/``h`` — and adds the rotation ``a`` in radians, canonically wrapped
-    into ``[-pi, pi)``. The corner properties (``x_min`` etc.) are derived
-    from the rotated extent, i.e. they describe the enclosing axis-aligned
-    box. ``area`` stays ``w * h`` regardless of rotation.
+    
+    Shares its storage with BBox — center x/y and extent w/h — and adds
+    the rotation a in radians, canonically wrapped into [-pi, pi).
+    The corner properties (x_min etc.) are derived from the rotated extent.
+    area stays w * h regardless of rotation.
+    
+    Metadata is stored in the meta dict (inherited from BBox).
     """
 
     __slots__ = ("a",)
 
     a: float
 
-    def __init__(self, x: float, y: float, w: float, h: float, a: float = 0.0) -> None:
+    def __init__(self, x: float, y: float, w: float, h: float, a: float = 0.0, meta: dict[str, Any] | None = None) -> None:
         names = ("x", "y", "w", "h", "a")
         values = tuple(float(v) for v in (x, y, w, h, a))
         for name, value in zip(names, values, strict=True):
@@ -45,11 +48,12 @@ class RBBox(BBox):
         for name, value in zip(names, values, strict=True):
             object.__setattr__(self, name, value)
         object.__setattr__(self, "a", _canonical_angle(values[4]))
+        object.__setattr__(self, "meta", meta or {})
 
     @classmethod
-    def from_degrees(cls, x: float, y: float, w: float, h: float, degrees: float) -> RBBox:
+    def from_degrees(cls, x: float, y: float, w: float, h: float, degrees: float, meta: dict[str, Any] | None = None) -> RBBox:
         """Build from an angle given in degrees."""
-        return RBBox(x, y, w, h, math.radians(degrees))
+        return RBBox(x, y, w, h, math.radians(degrees), meta)
 
     @classmethod
     def from_corners(
@@ -58,10 +62,11 @@ class RBBox(BBox):
         p1: Sequence[float],
         p2: Sequence[float],
         p3: Sequence[float],
+        meta: dict[str, Any] | None = None,
     ) -> RBBox:
         """Build from four corners given in ring order (either winding).
 
-        Raises ``ValueError`` when the points do not form a rectangle.
+        Raises ValueError when the points do not form a rectangle.
         """
         points = ((float(p0[0]), float(p0[1])), (float(p1[0]), float(p1[1])), (float(p2[0]), float(p2[1])), (float(p3[0]), float(p3[1])))
         cx = sum(p[0] for p in points) / 4
@@ -75,7 +80,7 @@ class RBBox(BBox):
         closes_ring = abs(v3x + v1x) + abs(v3y + v1y) <= 1e-6 * scale
         if norm == 0 or abs(dot) > 1e-6 * norm or not closes_ring:
             raise ValueError(f"corners do not form a rectangle: {points}")
-        return RBBox(cx, cy, math.hypot(v1x, v1y), math.hypot(v2x, v2y), math.atan2(v1y, v1x))
+        return RBBox(cx, cy, math.hypot(v1x, v1y), math.hypot(v2x, v2y), math.atan2(v1y, v1x), meta)
 
     @property
     def angle_rad(self) -> float:
@@ -111,7 +116,7 @@ class RBBox(BBox):
 
     def corners(self) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float], tuple[float, float]]:
         """The four corner points, counter-clockwise starting from the corner
-        at ``(+w/2, +h/2)`` in the local frame."""
+        at (+w/2, +h/2) in the local frame."""
         cos_a = math.cos(self.a)
         sin_a = math.sin(self.a)
         half_w = self.w / 2
@@ -123,30 +128,31 @@ class RBBox(BBox):
         return (corner(half_w, half_h), corner(-half_w, half_h), corner(-half_w, -half_h), corner(half_w, -half_h))
 
     def rotate(self, d_angle: float, unit: str = "rad") -> RBBox:
-        """Rotate by ``d_angle`` (radians by default, or ``unit="deg"``)."""
+        """Rotate by d_angle (radians by default, or unit="deg")."""
         if unit not in ("rad", "deg"):
             raise ValueError(f"unit must be 'rad' or 'deg', got {unit!r}")
         delta = math.radians(d_angle) if unit == "deg" else d_angle
-        return RBBox(self.x, self.y, self.w, self.h, self.a + delta)
+        return RBBox(self.x, self.y, self.w, self.h, self.a + delta, self.meta.copy())
 
     def translate(self, dx: float, dy: float) -> RBBox:
-        return RBBox(self.x + dx, self.y + dy, self.w, self.h, self.a)
+        return RBBox(self.x + dx, self.y + dy, self.w, self.h, self.a, self.meta.copy())
 
     def scale(self, factor_w: float, factor_h: float) -> RBBox:
         """Scale the extent about the center; rotation is preserved."""
         scaled = BBox(0.0, 0.0, self.w, self.h).scale(factor_w, factor_h)
-        return RBBox(self.x, self.y, scaled.w, scaled.h, self.a)
+        return RBBox(self.x, self.y, scaled.w, scaled.h, self.a, self.meta.copy())
 
     def to_bbox(self) -> BBox:
         """Lossy enclosing axis-aligned box."""
-        return BBox(self.x, self.y, 2 * self._half_enclosed_w, 2 * self._half_enclosed_h)
+        return BBox(self.x, self.y, 2 * self._half_enclosed_w, 2 * self._half_enclosed_h, self.meta.copy())
 
     def iou(self, other: object) -> float:
-        """Exact IoU against another :class:`RBBox`.
+        """Exact IoU against another RBBox.
 
-        Raises :class:`TypeError` for any other type, including plain
-        :class:`BBox`.
+        Raises TypeError for any other type, including plain BBox.
         """
+        from annofmt.geometry._polygons import clip_convex, shoelace_area
+        
         if type(other) is not RBBox:
             raise TypeError(f"RBBox.iou supports RBBox only, got {type(other).__name__}")
         intersection = clip_convex(self.corners(), other.corners())
@@ -158,6 +164,12 @@ class RBBox(BBox):
             return 0.0
         return inter_area / union
 
+    def with_meta(self, **kwargs: Any) -> RBBox:
+        """Return a new RBBox with updated metadata."""
+        new_meta = self.meta.copy()
+        new_meta.update(kwargs)
+        return RBBox(self.x, self.y, self.w, self.h, self.a, new_meta)
+
     def __setattr__(self, name: str, value: object) -> None:
         raise FrozenInstanceError(f"cannot assign to field {name!r}")
 
@@ -167,10 +179,12 @@ class RBBox(BBox):
     def __eq__(self, other: object) -> bool:
         if type(other) is not RBBox:
             return NotImplemented
+        # Exclude meta from equality comparison
         return (self.x, self.y, self.w, self.h, self.a) == (other.x, other.y, other.w, other.h, other.a)
 
     def __hash__(self) -> int:
+        # Exclude meta from hash
         return hash((type(self), self.x, self.y, self.w, self.h, self.a))
 
     def __repr__(self) -> str:
-        return f"RBBox(x={self.x}, y={self.y}, w={self.w}, h={self.h}, a={self.a})"
+        return f"RBBox(x={self.x}, y={self.y}, w={self.w}, h={self.h}, a={self.a}, meta={self.meta})"
