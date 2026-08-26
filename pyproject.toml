@@ -38,13 +38,10 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/annofmt"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-
 [tool.ruff]
 line-length = 140
 target-version = "py312"
-src = ["src", "tests"]
+src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
