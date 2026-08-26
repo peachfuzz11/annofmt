@@ -46,6 +46,7 @@ class BBox:
             (max(self.y_min, other.y_min) + min(self.y_max, other.y_max)) / 2,
             min(self.x_max, other.x_max) - max(self.x_min, other.x_min),
             min(self.y_max, other.y_max) - max(self.y_min, other.y_min),
+            self.meta,
         )
 
     def iou(self, other):
