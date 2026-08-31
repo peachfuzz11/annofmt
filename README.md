@@ -26,6 +26,11 @@ bbox = BBox(x=30, y=50, w=40, h=20)   # center + extent
 bbox.x_min                            # derived corner values
 bbox.to_xywh()
 
+# Normalized coordinates in [0, 1] relative to image dimensions
+bbox_normalized = bbox.normalize(Height, Width)
+# Denormalize back to pixel coordinates
+bbox_denormalized = bbox_normalized.denormalize(Height, Width)
+
 rotated = RBBox.from_degrees(x=30, y=50, w=40, h=20, degrees=25)   # same xywh, plus `a`
 rotated.corners()
 rotated.to_bbox()                     # lossy enclosing axis-aligned box

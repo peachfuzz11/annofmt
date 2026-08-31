@@ -1,3 +1,6 @@
+import warnings
+
+
 class BBox:
     def __init__(self, x, y, w, h, meta=None):
         self.x = float(x)
@@ -5,6 +8,24 @@ class BBox:
         self.w = float(w)
         self.h = float(h)
         self.meta = meta or {}
+
+    def normalize(self, W, H):
+        nx = self.x / W
+        ny = self.y / H
+        nw = self.w / W
+        nh = self.h / H
+        if not (0 <= nx <= 1 and 0 <= ny <= 1 and 0 <= nw <= 1 and 0 <= nh <= 1):
+            warnings.warn("BBox normalize: coordinates outside [0, 1] after normalization", RuntimeWarning, stacklevel=2)
+        return BBox(nx, ny, nw, nh, self.meta)
+
+    def denormalize(self, W, H):
+        dx = self.x * W
+        dy = self.y * H
+        dw = self.w * W
+        dh = self.h * H
+        if not (0 <= dx <= W and 0 <= dy <= H and 0 <= dw <= W and 0 <= dh <= H):
+            warnings.warn("BBox denormalize: coordinates outside [0, W] and [0, H]", RuntimeWarning, stacklevel=2)
+        return BBox(dx, dy, dw, dh, self.meta)
 
     @property
     def x_min(self):
