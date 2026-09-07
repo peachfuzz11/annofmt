@@ -9,6 +9,52 @@ class BBox:
         self.h = float(h)
         self.meta = meta or {}
 
+    @classmethod
+    def from_xywh(cls, x, y, w, h, meta=None):
+        """Center x, center y, width, height (the native storage format)."""
+        return cls(x, y, w, h, meta=meta)
+
+    # Explicit-center alias for callers that spell it out.
+    from_cxcywh = from_xywh
+
+    @classmethod
+    def from_xyxy(cls, x1, y1, x2, y2, meta=None):
+        """Two opposite corners: (x1, y1) and (x2, y2). Order-independent (Pascal VOC)."""
+        x_min, x_max = min(x1, x2), max(x1, x2)
+        y_min, y_max = min(y1, y2), max(y1, y2)
+        return cls((x_min + x_max) / 2, (y_min + y_max) / 2, x_max - x_min, y_max - y_min, meta=meta)
+
+    @classmethod
+    def from_xxyy(cls, x1, x2, y1, y2, meta=None):
+        """x range then y range: x1, x2, y1, y2. Order-independent."""
+        return cls.from_xyxy(x1, y1, x2, y2, meta=meta)
+
+    @classmethod
+    def from_ltwh(cls, left, top, w, h, meta=None):
+        """Top-left corner plus width, height (COCO)."""
+        return cls(left + w / 2, top + h / 2, w, h, meta=meta)
+
+    # Common spellings of the same layouts.
+    from_x1y1x2y2 = from_xyxy
+    from_x1x2y1y2 = from_xxyy
+    from_x1y1wh = from_ltwh
+
+    def to_xywh(self):
+        """Center x, center y, width, height."""
+        return (self.x, self.y, self.w, self.h)
+
+    def to_xyxy(self):
+        """Top-left and bottom-right corners: x_min, y_min, x_max, y_max."""
+        return (self.x_min, self.y_min, self.x_max, self.y_max)
+
+    def to_xxyy(self):
+        """x range then y range: x_min, x_max, y_min, y_max."""
+        return (self.x_min, self.x_max, self.y_min, self.y_max)
+
+    def to_ltwh(self):
+        """Top-left corner plus width, height: x_min, y_min, w, h."""
+        return (self.x_min, self.y_min, self.w, self.h)
+
     def normalize(self, W, H):
         nx = self.x / W
         ny = self.y / H

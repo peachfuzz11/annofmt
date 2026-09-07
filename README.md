@@ -24,7 +24,18 @@ from annofmt.tag import Tag
 
 bbox = BBox(x=30, y=50, w=40, h=20)   # center + extent
 bbox.x_min                            # derived corner values
-bbox.to_xywh()
+
+# Build from whichever coordinate layout you already have
+BBox.from_xywh(30, 50, 40, 20)        # center x/y + w/h (native, YOLO-style)
+BBox.from_xyxy(10, 40, 50, 60)        # corners: x_min, y_min, x_max, y_max (Pascal VOC)
+BBox.from_xxyy(10, 50, 40, 60)        # x range then y range: x1, x2, y1, y2
+BBox.from_ltwh(10, 40, 40, 20)        # top-left corner + w/h (COCO)
+
+# ...and read any layout back out as a plain tuple
+bbox.to_xywh()                        # (x, y, w, h)
+bbox.to_xyxy()                        # (x_min, y_min, x_max, y_max)
+bbox.to_xxyy()                        # (x_min, x_max, y_min, y_max)
+bbox.to_ltwh()                        # (x_min, y_min, w, h)
 
 # Normalized coordinates in [0, 1] relative to image dimensions
 bbox_normalized = bbox.normalize(Height, Width)
@@ -69,6 +80,23 @@ the receiver.
 IoU is defined **only between two geometries of the same type** and raises
 `TypeError` otherwise. Convert explicitly first when a cross-type comparison
 is really wanted (e.g. compare every geometry's `to_bbox()`).
+
+## Coordinate layouts
+
+`BBox` stores center-plus-extent, but you rarely have data in that form.
+The `from_*` classmethods accept the common layouts and the `to_*` methods
+return them as plain tuples:
+
+| Layout      | Constructor         | Aliases                        | Meaning                              |
+| ----------- | ------------------- | ------------------------------ | ------------------------------------ |
+| `xywh`      | `BBox.from_xywh`    | `from_cxcywh`                  | center x, center y, width, height    |
+| `xyxy`      | `BBox.from_xyxy`    | `from_x1y1x2y2`                | x_min, y_min, x_max, y_max (Pascal VOC) |
+| `xxyy`      | `BBox.from_xxyy`    | `from_x1x2y1y2`                | x_min, x_max, y_min, y_max           |
+| `ltwh`      | `BBox.from_ltwh`    | `from_x1y1wh`                  | left, top, width, height (COCO)      |
+
+`from_xyxy` / `from_xxyy` are order-independent (corners may be passed in
+either order). The classmethods are inherited by `RBBox` (angle defaults to
+`0`). Every constructor and accessor takes / preserves `meta`.
 
 ## Conventions
 
