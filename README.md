@@ -26,16 +26,16 @@ bbox = BBox(x=30, y=50, w=40, h=20)   # center + extent
 bbox.x_min                            # derived corner values
 
 # Build from whichever coordinate layout you already have
-BBox.from_xywh(30, 50, 40, 20)        # center x/y + w/h (native, YOLO-style)
-BBox.from_xyxy(10, 40, 50, 60)        # corners: x_min, y_min, x_max, y_max (Pascal VOC)
-BBox.from_xxyy(10, 50, 40, 60)        # x range then y range: x1, x2, y1, y2
-BBox.from_ltwh(10, 40, 40, 20)        # top-left corner + w/h (COCO)
+BBox.from_xywh(30, 50, 40, 20)        # center x, center y, w, h (native, YOLO-style)
+BBox.from_x1y1x2y2(10, 40, 50, 60)    # corners: left, top, right, bottom edge (Pascal VOC)
+BBox.from_x1x2y1y2(10, 50, 40, 60)    # x range then y range: left, right, top, bottom edge
+BBox.from_x1y1wh(10, 40, 40, 20)      # top-left corner (x1, y1) + w, h (COCO)
 
 # ...and read any layout back out as a plain tuple
-bbox.to_xywh()                        # (x, y, w, h)
-bbox.to_xyxy()                        # (x_min, y_min, x_max, y_max)
-bbox.to_xxyy()                        # (x_min, x_max, y_min, y_max)
-bbox.to_ltwh()                        # (x_min, y_min, w, h)
+bbox.to_xywh()                        # (center x, center y, w, h)
+bbox.to_x1y1x2y2()                    # (left, top, right, bottom edge)
+bbox.to_x1x2y1y2()                    # (left, right, top, bottom edge)
+bbox.to_x1y1wh()                      # (x1, y1, w, h)
 
 # Normalized coordinates in [0, 1] relative to image dimensions
 bbox_normalized = bbox.normalize(Height, Width)
@@ -84,19 +84,21 @@ is really wanted (e.g. compare every geometry's `to_bbox()`).
 ## Coordinate layouts
 
 `BBox` stores center-plus-extent, but you rarely have data in that form.
-The `from_*` classmethods accept the common layouts and the `to_*` methods
-return them as plain tuples:
+Each `from_*` classmethod builds a box from a named coordinate layout and
+each `to_*` method returns that layout as a plain tuple. The method name
+spells out the argument order — `x1`/`y1` are the top-left corner (left and
+top edge), `x2`/`y2` the bottom-right corner (right and bottom edge):
 
-| Layout      | Constructor         | Aliases                        | Meaning                              |
-| ----------- | ------------------- | ------------------------------ | ------------------------------------ |
-| `xywh`      | `BBox.from_xywh`    | `from_cxcywh`                  | center x, center y, width, height    |
-| `xyxy`      | `BBox.from_xyxy`    | `from_x1y1x2y2`                | x_min, y_min, x_max, y_max (Pascal VOC) |
-| `xxyy`      | `BBox.from_xxyy`    | `from_x1x2y1y2`                | x_min, x_max, y_min, y_max           |
-| `ltwh`      | `BBox.from_ltwh`    | `from_x1y1wh`                  | left, top, width, height (COCO)      |
+| Constructor            | Accessor            | Arguments                                              |
+| ---------------------- | ------------------- | ----------------------------------------------------- |
+| `BBox.from_xywh`       | `bbox.to_xywh`      | center x, center y, width, height (native, YOLO-style) |
+| `BBox.from_x1y1x2y2`   | `bbox.to_x1y1x2y2`  | x1, y1, x2, y2 — left, top, right, bottom edge (Pascal VOC) |
+| `BBox.from_x1x2y1y2`   | `bbox.to_x1x2y1y2`  | x1, x2, y1, y2 — left, right, top, bottom edge         |
+| `BBox.from_x1y1wh`     | `bbox.to_x1y1wh`    | x1, y1, width, height — top-left corner + size (COCO)  |
 
-`from_xyxy` / `from_xxyy` are order-independent (corners may be passed in
-either order). The classmethods are inherited by `RBBox` (angle defaults to
-`0`). Every constructor and accessor takes / preserves `meta`.
+`from_x1y1x2y2` / `from_x1x2y1y2` accept the two edges in either order. The
+classmethods are inherited by `RBBox` (angle defaults to `0`). Every
+constructor and accessor takes / preserves `meta`.
 
 ## Conventions
 

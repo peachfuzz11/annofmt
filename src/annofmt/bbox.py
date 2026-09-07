@@ -11,48 +11,51 @@ class BBox:
 
     @classmethod
     def from_xywh(cls, x, y, w, h, meta=None):
-        """Center x, center y, width, height (the native storage format)."""
+        """Build from center x, center y, width, height (the native storage format)."""
         return cls(x, y, w, h, meta=meta)
 
-    # Explicit-center alias for callers that spell it out.
-    from_cxcywh = from_xywh
+    @classmethod
+    def from_x1y1x2y2(cls, x1, y1, x2, y2, meta=None):
+        """Build from two corners: (x1, y1) top-left, (x2, y2) bottom-right.
+
+        x1 is the left edge, y1 the top edge, x2 the right edge, y2 the bottom
+        edge. Corners may be given in either order.
+        """
+        x_left, x_right = min(x1, x2), max(x1, x2)
+        y_top, y_bottom = min(y1, y2), max(y1, y2)
+        return cls((x_left + x_right) / 2, (y_top + y_bottom) / 2, x_right - x_left, y_bottom - y_top, meta=meta)
 
     @classmethod
-    def from_xyxy(cls, x1, y1, x2, y2, meta=None):
-        """Two opposite corners: (x1, y1) and (x2, y2). Order-independent (Pascal VOC)."""
-        x_min, x_max = min(x1, x2), max(x1, x2)
-        y_min, y_max = min(y1, y2), max(y1, y2)
-        return cls((x_min + x_max) / 2, (y_min + y_max) / 2, x_max - x_min, y_max - y_min, meta=meta)
+    def from_x1x2y1y2(cls, x1, x2, y1, y2, meta=None):
+        """Build from the x range then the y range: x1 left, x2 right, y1 top, y2 bottom.
+
+        Same box as :meth:`from_x1y1x2y2`, only the argument order differs. Edges
+        may be given in either order.
+        """
+        return cls.from_x1y1x2y2(x1, y1, x2, y2, meta=meta)
 
     @classmethod
-    def from_xxyy(cls, x1, x2, y1, y2, meta=None):
-        """x range then y range: x1, x2, y1, y2. Order-independent."""
-        return cls.from_xyxy(x1, y1, x2, y2, meta=meta)
+    def from_x1y1wh(cls, x1, y1, w, h, meta=None):
+        """Build from the top-left corner (x1, y1) plus width and height (COCO layout).
 
-    @classmethod
-    def from_ltwh(cls, left, top, w, h, meta=None):
-        """Top-left corner plus width, height (COCO)."""
-        return cls(left + w / 2, top + h / 2, w, h, meta=meta)
-
-    # Common spellings of the same layouts.
-    from_x1y1x2y2 = from_xyxy
-    from_x1x2y1y2 = from_xxyy
-    from_x1y1wh = from_ltwh
+        x1 is the left edge, y1 the top edge.
+        """
+        return cls(x1 + w / 2, y1 + h / 2, w, h, meta=meta)
 
     def to_xywh(self):
-        """Center x, center y, width, height."""
+        """Return (center x, center y, width, height)."""
         return (self.x, self.y, self.w, self.h)
 
-    def to_xyxy(self):
-        """Top-left and bottom-right corners: x_min, y_min, x_max, y_max."""
+    def to_x1y1x2y2(self):
+        """Return the two corners (x1, y1, x2, y2): left, top, right, bottom edge."""
         return (self.x_min, self.y_min, self.x_max, self.y_max)
 
-    def to_xxyy(self):
-        """x range then y range: x_min, x_max, y_min, y_max."""
+    def to_x1x2y1y2(self):
+        """Return the x range then the y range (x1, x2, y1, y2): left, right, top, bottom edge."""
         return (self.x_min, self.x_max, self.y_min, self.y_max)
 
-    def to_ltwh(self):
-        """Top-left corner plus width, height: x_min, y_min, w, h."""
+    def to_x1y1wh(self):
+        """Return (x1, y1, width, height): top-left corner plus size (COCO layout)."""
         return (self.x_min, self.y_min, self.w, self.h)
 
     def normalize(self, W, H):
