@@ -2,25 +2,49 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: uv build
-
-  publish:
-    needs: build
+  release:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      id-token: write
+      id-token: write   # PyPI trusted publishing
+      contents: write   # push the release tag
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv build
-      - run: uv publish
+
+      - name: Read project version
+        id: version
+        run: |
+          version=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/version = "(.+)"/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "project version: $version"
+
+      - name: Check whether this version is already on PyPI
+        id: check
+        run: |
+          if curl -sf -o /dev/null "https://pypi.org/pypi/annofmt/${{ steps.version.outputs.version }}/json"; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "annofmt ${{ steps.version.outputs.version }} is already on PyPI - nothing to do"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "annofmt ${{ steps.version.outputs.version }} is new - will build and publish"
+          fi
+
+      - name: Build
+        if: steps.check.outputs.published == 'false'
+        run: uv build
+
+      - name: Publish
+        if: steps.check.outputs.published == 'false'
+        run: uv publish
+
+      - name: Tag the release
+        if: steps.check.outputs.published == 'false'
+        run: |
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
